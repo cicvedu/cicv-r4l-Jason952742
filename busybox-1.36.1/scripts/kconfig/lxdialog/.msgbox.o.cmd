@@ -1,4 +1,4 @@
-cmd_scripts/kconfig/lxdialog/msgbox.o := gcc -Wp,-MD,scripts/kconfig/lxdialog/.msgbox.o.d -Wall -Wstrict-prototypes -O2 -fomit-frame-pointer   -D_DEFAULT_SOURCE -D_XOPEN_SOURCE=600  -DCURSES_LOC="<ncurses.h>" -DNCURSES_WIDECHAR=1 -DLOCALE    -c -o scripts/kconfig/lxdialog/msgbox.o scripts/kconfig/lxdialog/msgbox.c
+cmd_scripts/kconfig/lxdialog/msgbox.o := gcc -Wp,-MD,scripts/kconfig/lxdialog/.msgbox.o.d -Wall -Wstrict-prototypes -O2 -fomit-frame-pointer   -D_DEFAULT_SOURCE -D_XOPEN_SOURCE=600 -DCURSES_LOC="<ncurses.h>" -DNCURSES_WIDECHAR=1 -DLOCALE    -c -o scripts/kconfig/lxdialog/msgbox.o scripts/kconfig/lxdialog/msgbox.c
 
 deps_scripts/kconfig/lxdialog/msgbox.o := \
   scripts/kconfig/lxdialog/msgbox.c \
@@ -20,7 +20,7 @@ deps_scripts/kconfig/lxdialog/msgbox.o := \
   /usr/include/x86_64-linux-gnu/bits/types/clockid_t.h \
   /usr/include/x86_64-linux-gnu/bits/types/time_t.h \
   /usr/include/x86_64-linux-gnu/bits/types/timer_t.h \
-  /usr/lib/gcc/x86_64-linux-gnu/12/include/stddef.h \
+  /usr/lib/gcc/x86_64-unknown-linux-gnu/13.2.0/include/stddef.h \
   /usr/include/x86_64-linux-gnu/bits/stdint-intn.h \
   /usr/include/endian.h \
   /usr/include/x86_64-linux-gnu/bits/endian.h \
@@ -65,29 +65,30 @@ deps_scripts/kconfig/lxdialog/msgbox.o := \
   /usr/include/x86_64-linux-gnu/bits/stdlib-float.h \
   /usr/include/string.h \
   /usr/include/strings.h \
-  /usr/include/curses.h \
+  /usr/include/x86_64-linux-gnu/ncurses.h \
   /usr/include/ncurses_dll.h \
-  /usr/lib/gcc/x86_64-linux-gnu/12/include/stdint.h \
+  /usr/lib/gcc/x86_64-unknown-linux-gnu/13.2.0/include/stdint.h \
   /usr/include/stdint.h \
   /usr/include/x86_64-linux-gnu/bits/wchar.h \
   /usr/include/x86_64-linux-gnu/bits/stdint-uintn.h \
   /usr/include/stdio.h \
-  /usr/lib/gcc/x86_64-linux-gnu/12/include/stdarg.h \
+  /usr/lib/gcc/x86_64-unknown-linux-gnu/13.2.0/include/stdarg.h \
   /usr/include/x86_64-linux-gnu/bits/types/__fpos_t.h \
   /usr/include/x86_64-linux-gnu/bits/types/__mbstate_t.h \
   /usr/include/x86_64-linux-gnu/bits/types/__fpos64_t.h \
   /usr/include/x86_64-linux-gnu/bits/types/__FILE.h \
   /usr/include/x86_64-linux-gnu/bits/types/FILE.h \
   /usr/include/x86_64-linux-gnu/bits/types/struct_FILE.h \
+  /usr/include/x86_64-linux-gnu/bits/types/cookie_io_functions_t.h \
   /usr/include/x86_64-linux-gnu/bits/stdio_lim.h \
   /usr/include/x86_64-linux-gnu/bits/stdio.h \
-  /usr/lib/gcc/x86_64-linux-gnu/12/include/stdbool.h \
+  /usr/lib/gcc/x86_64-unknown-linux-gnu/13.2.0/include/stdbool.h \
   /usr/include/wchar.h \
   /usr/include/x86_64-linux-gnu/bits/types/wint_t.h \
   /usr/include/x86_64-linux-gnu/bits/types/mbstate_t.h \
   /usr/include/x86_64-linux-gnu/bits/wctype-wchar.h \
   /usr/include/unctrl.h \
-  /usr/include/curses.h \
+  /usr/include/x86_64-linux-gnu/curses.h \
 
 scripts/kconfig/lxdialog/msgbox.o: $(deps_scripts/kconfig/lxdialog/msgbox.o)
 
