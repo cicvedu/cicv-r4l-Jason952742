@@ -46,7 +46,7 @@ struct NetDevicePrvData {
     tx_ring: SpinLock<Option<TxRingBuf>>,
     rx_ring: SpinLock<Option<RxRingBuf>>,
     irq: u32,
-    _irq_handler: AtomicPtr<kernel::irq::Registration<E1000InterruptHandler>>
+    _irq_handler: AtomicPtr<kernel::irq::Registration<E1000InterruptHandler>>,
 }
 
 
@@ -65,11 +65,11 @@ impl NetDevice {
 
         // Alloc dma memory space for tx desciptors
         let dma_desc = dma::Allocation::<hw_defs::TxDescEntry>::try_new(&*data.dev, TX_RING_SIZE, bindings::GFP_KERNEL)?;
-        
+
         // Safety: all fields of the slice members will be inited below.
         let tx_ring = unsafe{core::slice::from_raw_parts_mut(dma_desc.cpu_addr, TX_RING_SIZE)};
-        
-        
+
+
         tx_ring.iter_mut().enumerate().for_each(|(idx, desc)| {
             desc.buf_addr = 0;
             desc.cmd = 0;
@@ -89,20 +89,20 @@ impl NetDevice {
 
         // Alloc dma memory space for rx desciptors
         let dma_desc = dma::Allocation::<hw_defs::RxDescEntry>::try_new(&*data.dev, RX_RING_SIZE, bindings::GFP_KERNEL)?;
-        
+
         // Safety: all fields of the slice members will be inited below.
         let rx_ring_desc = unsafe{core::slice::from_raw_parts_mut(dma_desc.cpu_addr, RX_RING_SIZE)};
-                
+
         // Alloc dma memory space for buffers
         let dma_buf = dma::Allocation::<u8>::try_new(&*data.dev, RX_RING_SIZE * RXTX_SINGLE_RING_BLOCK_SIZE, bindings::GFP_KERNEL)?;
-        
+
         let mut rx_ring = RxRingBuf::new(dma_desc, RX_RING_SIZE);
 
-        
+
         rx_ring_desc.iter_mut().enumerate().for_each(|(idx, desc)| {
             let skb = dev.alloc_skb_ip_align(RXTX_SINGLE_RING_BLOCK_SIZE as u32).unwrap();
             let dma_map = dma::MapSingle::try_new(&*data.dev, skb.head_data().as_ptr() as *mut u8, RXTX_SINGLE_RING_BLOCK_SIZE, bindings::dma_data_direction_DMA_FROM_DEVICE).unwrap();
-            
+
             desc.buf_addr = dma_map.dma_handle as u64;
             desc.length = 0;
             desc.special = 0;
@@ -126,7 +126,7 @@ impl NetDevice {
         let mut tx_ring = tx_ring.as_mut().unwrap();
 
         let descs = tx_ring.desc.as_desc_slice();
-        
+
         let mut idx = tx_ring.next_to_clean;
         while descs[idx].sta & E1000_TXD_STAT_DD as u8 != 0 && idx != tdh as usize {
             let (dm, skb) = tx_ring.buf.borrow_mut()[idx].take().unwrap();
@@ -138,15 +138,33 @@ impl NetDevice {
             idx = (idx + 1) % TX_RING_SIZE;
         }
         tx_ring.next_to_clean = idx;
-
     }
 
+    fn e1000_cleanup_tx_resources(data: &NetDevicePrvData) {
+        let mut tx_ring_guard = data.tx_ring.lock();
+        if let Some(tx_ring) = tx_ring_guard.take() {
+            drop(tx_ring);
+        }
+    }
+
+    fn e1000_cleanup_rx_resources(data: &NetDevicePrvData) {
+        let mut rx_ring_guard = data.rx_ring.lock();
+        if let Some(mut rx_ring) = rx_ring_guard.take() {
+            for entry in rx_ring.buf.borrow_mut().iter_mut() {
+                if let Some((dma_map, skb)) = entry.take() {
+                    drop(dma_map);
+                    drop(skb);
+                }
+            }
+            drop(rx_ring);
+        }
+    }
 
 }
 
 #[vtable]
 impl net::DeviceOperations for NetDevice {
-    
+
     type Data = Box<NetDevicePrvData>;
 
     /// this method will be called when you type `ip link set eth0 up` in your shell.
@@ -191,6 +209,24 @@ impl net::DeviceOperations for NetDevice {
 
     fn stop(_dev: &net::Device, _data: &NetDevicePrvData) -> Result {
         pr_info!("Rust for linux e1000 driver demo (net device stop)\n");
+
+        Self::e1000_cleanup_tx_resources(_data);
+        Self::e1000_cleanup_rx_resources(_data);
+
+        let irq_handler_ptr = _data._irq_handler.load(core::sync::atomic::Ordering::Relaxed);
+
+        if !irq_handler_ptr.is_null() {
+            unsafe {
+                let _irq_handler_box = Box::from_raw(irq_handler_ptr);
+            }
+            _data._irq_handler.store(core::ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
+        }
+
+        _dev.netif_stop_queue();
+        _dev.netif_carrier_off();
+
+        _data.e1000_hw_ops.e1000_reset_hw();
+
         Ok(())
     }
 
@@ -292,12 +328,19 @@ impl kernel::irq::Handler for E1000InterruptHandler {
 
 /// the private data for the adapter
 struct E1000DrvPrvData {
+    bars: i32,
+    irq: u32,
     _netdev_reg: net::Registration<NetDevice>,
+    dev_ptr: *mut bindings::pci_dev
 }
+
+unsafe impl Send for E1000DrvPrvData {}
+unsafe impl Sync for E1000DrvPrvData {}
 
 impl driver::DeviceRemoval for E1000DrvPrvData {
     fn device_remove(&self) {
         pr_info!("Rust for linux e1000 driver demo (device_remove)\n");
+        drop(&self._netdev_reg);
     }
 }
 
@@ -456,20 +499,41 @@ impl pci::Driver for E1000Drv {
             }
         )?)?;
 
-        
+
 
         Ok(Box::try_new(
             E1000DrvPrvData{
                 // Must hold this registration, or the device will be removed.
+                bars,
+                irq,
                 _netdev_reg: netdev_reg,
+                dev_ptr: dev.to_ptr()
             }
         )?)
     }
 
     fn remove(data: &Self::Data) {
         pr_info!("Rust for linux e1000 driver demo (remove)\n");
+
+        let netdev = data._netdev_reg.dev_get();
+        let bars = data.bars;
+        // let pci_dev_ptr = data.dev_ptr;
+        let netdev_reg = &data._netdev_reg;
+
+        netdev.netif_carrier_off();
+        netdev.netif_stop_queue();
+
+        // unsafe {
+        //     bindings::pci_release_selected_regions(pci_dev_ptr, bars);
+        //     bindings::pci_clear_master(pci_dev_ptr);
+        //     bindings::pci_disable_device(pci_dev_ptr);
+        // }
+
+        drop(netdev_reg);
+        drop(data)
     }
 }
+
 struct E1000KernelMod {
     _dev: Pin<Box<driver::Registration::<pci::Adapter<E1000Drv>>>>,
 }
@@ -488,5 +552,6 @@ impl kernel::Module for E1000KernelMod {
 impl Drop for E1000KernelMod {
     fn drop(&mut self) {
         pr_info!("Rust for linux e1000 driver demo (exit)\n");
+        drop(&self._dev);
     }
 }
