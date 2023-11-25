@@ -15,7 +15,6 @@ use kernel::device::RawDevice;
 use kernel::sync::SpinLock;
 
 
-
 mod consts;
 mod hw_defs;
 mod ring_buf;
@@ -52,6 +51,7 @@ struct NetDevicePrvData {
 
 // TODO not sure why it is safe to do this.
 unsafe impl Send for NetDevicePrvData {}
+
 unsafe impl Sync for NetDevicePrvData {}
 
 /// Represent the network device
@@ -59,7 +59,6 @@ struct NetDevice {}
 
 
 impl NetDevice {
-
     /// Alloc the tx descriptor. But doesn't need to alloc buffer memory, since the network stack will pass in a SkBuff.
     fn e1000_setup_all_tx_resources(data: &NetDevicePrvData) -> Result<TxRingBuf> {
 
@@ -67,7 +66,7 @@ impl NetDevice {
         let dma_desc = dma::Allocation::<hw_defs::TxDescEntry>::try_new(&*data.dev, TX_RING_SIZE, bindings::GFP_KERNEL)?;
 
         // Safety: all fields of the slice members will be inited below.
-        let tx_ring = unsafe{core::slice::from_raw_parts_mut(dma_desc.cpu_addr, TX_RING_SIZE)};
+        let tx_ring = unsafe { core::slice::from_raw_parts_mut(dma_desc.cpu_addr, TX_RING_SIZE) };
 
 
         tx_ring.iter_mut().enumerate().for_each(|(idx, desc)| {
@@ -91,7 +90,7 @@ impl NetDevice {
         let dma_desc = dma::Allocation::<hw_defs::RxDescEntry>::try_new(&*data.dev, RX_RING_SIZE, bindings::GFP_KERNEL)?;
 
         // Safety: all fields of the slice members will be inited below.
-        let rx_ring_desc = unsafe{core::slice::from_raw_parts_mut(dma_desc.cpu_addr, RX_RING_SIZE)};
+        let rx_ring_desc = unsafe { core::slice::from_raw_parts_mut(dma_desc.cpu_addr, RX_RING_SIZE) };
 
         // Alloc dma memory space for buffers
         let dma_buf = dma::Allocation::<u8>::try_new(&*data.dev, RX_RING_SIZE * RXTX_SINGLE_RING_BLOCK_SIZE, bindings::GFP_KERNEL)?;
@@ -139,32 +138,10 @@ impl NetDevice {
         }
         tx_ring.next_to_clean = idx;
     }
-
-    fn e1000_cleanup_tx_resources(data: &NetDevicePrvData) {
-        let mut tx_ring_guard = data.tx_ring.lock();
-        if let Some(tx_ring) = tx_ring_guard.take() {
-            drop(tx_ring);
-        }
-    }
-
-    fn e1000_cleanup_rx_resources(data: &NetDevicePrvData) {
-        let mut rx_ring_guard = data.rx_ring.lock();
-        if let Some(mut rx_ring) = rx_ring_guard.take() {
-            for entry in rx_ring.buf.borrow_mut().iter_mut() {
-                if let Some((dma_map, skb)) = entry.take() {
-                    drop(dma_map);
-                    drop(skb);
-                }
-            }
-            drop(rx_ring);
-        }
-    }
-
 }
 
 #[vtable]
 impl net::DeviceOperations for NetDevice {
-
     type Data = Box<NetDevicePrvData>;
 
     /// this method will be called when you type `ip link set eth0 up` in your shell.
@@ -179,7 +156,7 @@ impl net::DeviceOperations for NetDevice {
 
         // TODO e1000_power_up_phy() not implemented. It's used in case of PHY *MAY* power down,
         // which will not be supported in this MVP driver.
-        
+
 
         // modify e1000's hardware registers, give rx/tx queue info to the nic.
         data.e1000_hw_ops.e1000_configure(&rx_ringbuf, &tx_ringbuf)?;
@@ -187,14 +164,14 @@ impl net::DeviceOperations for NetDevice {
         *data.rx_ring.lock_irqdisable() = Some(rx_ringbuf);
         *data.tx_ring.lock_irqdisable() = Some(tx_ringbuf);
 
-        let irq_prv_data = Box::try_new(IrqPrivateData{
+        let irq_prv_data = Box::try_new(IrqPrivateData {
             e1000_hw_ops: Arc::clone(&data.e1000_hw_ops),
             napi: Arc::clone(&data.napi),
         })?;
-        
-        // Again, the `irq::Registration` contains an `irq::InternalRegistration` which implemented `Drop`, so 
+
+        // Again, the `irq::Registration` contains an `irq::InternalRegistration` which implemented `Drop`, so
         // we mustn't let it dropped.
-        // TODO: there is memory leak now. 
+        // TODO: there is memory leak now.
         let req_reg = kernel::irq::Registration::<E1000InterruptHandler>::try_new(data.irq, irq_prv_data, kernel::irq::flags::SHARED, fmt!("{}",data.dev.name()))?;
         data._irq_handler.store(Box::into_raw(Box::try_new(req_reg)?), core::sync::atomic::Ordering::Relaxed);
 
@@ -209,33 +186,14 @@ impl net::DeviceOperations for NetDevice {
 
     fn stop(_dev: &net::Device, _data: &NetDevicePrvData) -> Result {
         pr_info!("Rust for linux e1000 driver demo (net device stop)\n");
-
-        Self::e1000_cleanup_tx_resources(_data);
-        Self::e1000_cleanup_rx_resources(_data);
-
-        let irq_handler_ptr = _data._irq_handler.load(core::sync::atomic::Ordering::Relaxed);
-
-        if !irq_handler_ptr.is_null() {
-            unsafe {
-                let _irq_handler_box = Box::from_raw(irq_handler_ptr);
-            }
-            _data._irq_handler.store(core::ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
-        }
-
-        _dev.netif_stop_queue();
-        _dev.netif_carrier_off();
-
-        _data.e1000_hw_ops.e1000_reset_hw();
-
         Ok(())
     }
 
 
     fn start_xmit(skb: &net::SkBuff, dev: &net::Device, data: &NetDevicePrvData) -> net::NetdevTx {
-
         if skb.head_data().len() > RXTX_SINGLE_RING_BLOCK_SIZE {
             pr_err!("xmit msg too long");
-            return net::NetdevTx::Busy
+            return net::NetdevTx::Busy;
         }
 
         let mut tx_ring = data.tx_ring.lock_irqdisable();
@@ -251,12 +209,12 @@ impl net::DeviceOperations for NetDevice {
         * To WA this issue, pad all small packets manually.
         */
         skb.put_padto(bindings::ETH_ZLEN);
-        
+
         // tell the kernel that we have pended some data to the hardware.
         dev.sent_queue(skb.len());
 
         let mut tx_ring = tx_ring.as_mut().unwrap();
-        let tx_descs:&mut [TxDescEntry] = tx_ring.desc.as_desc_slice();
+        let tx_descs: &mut [TxDescEntry] = tx_ring.desc.as_desc_slice();
         let tx_desc = &mut tx_descs[tdt as usize];
         if tx_desc.sta & E1000_TXD_STAT_DD as u8 == 0 {
             pr_err!("xmit busy");
@@ -264,7 +222,7 @@ impl net::DeviceOperations for NetDevice {
         }
 
         // alloc DMA map to skb
-        let ms:dma::MapSingle<u8> = if let Ok(ms) = dma::MapSingle::try_new(&*data.dev, skb.head_data().as_ptr() as *mut u8, skb.len() as usize, bindings::dma_data_direction_DMA_TO_DEVICE) {
+        let ms: dma::MapSingle<u8> = if let Ok(ms) = dma::MapSingle::try_new(&*data.dev, skb.head_data().as_ptr() as *mut u8, skb.len() as usize, bindings::dma_data_direction_DMA_TO_DEVICE) {
             ms
         } else {
             return net::NetdevTx::Busy;
@@ -281,10 +239,9 @@ impl net::DeviceOperations for NetDevice {
         tdt = (tdt + 1) % TX_RING_SIZE as u32;
         data.e1000_hw_ops.e1000_write_tx_queue_tail(tdt);
 
-        
+
         net::NetdevTx::Ok
     }
-
 
 
     fn get_stats64(_netdev: &net::Device, _data: &NetDevicePrvData, stats: &mut net::RtnlLinkStats64) {
@@ -297,7 +254,7 @@ impl net::DeviceOperations for NetDevice {
     }
 }
 
-// since the ownership limitation, We can't use NetDevicePrvData as C code, so we need to define a new type here. 
+// since the ownership limitation, We can't use NetDevicePrvData as C code, so we need to define a new type here.
 struct IrqPrivateData {
     e1000_hw_ops: Arc<E1000Ops>,
     napi: Arc<net::Napi>,
@@ -316,7 +273,7 @@ impl kernel::irq::Handler for E1000InterruptHandler {
         pr_info!("pending_irqs: {}\n", pending_irqs);
 
         if pending_irqs == 0 {
-            return kernel::irq::Return::None
+            return kernel::irq::Return::None;
         }
 
         data.napi.schedule();
@@ -328,23 +285,16 @@ impl kernel::irq::Handler for E1000InterruptHandler {
 
 /// the private data for the adapter
 struct E1000DrvPrvData {
-    bars: i32,
-    irq: u32,
     _netdev_reg: net::Registration<NetDevice>,
-    dev_ptr: *mut bindings::pci_dev
 }
-
-unsafe impl Send for E1000DrvPrvData {}
-unsafe impl Sync for E1000DrvPrvData {}
 
 impl driver::DeviceRemoval for E1000DrvPrvData {
     fn device_remove(&self) {
         pr_info!("Rust for linux e1000 driver demo (device_remove)\n");
-        drop(&self._netdev_reg);
     }
 }
 
-struct NapiHandler{}
+struct NapiHandler {}
 
 impl net::NapiPoller for NapiHandler {
     type Data = Box<NetDevicePrvData>;
@@ -361,11 +311,10 @@ impl net::NapiPoller for NapiHandler {
         rdt = (rdt + 1) % RX_RING_SIZE;
 
 
-
         let mut rx_ring_guard = data.rx_ring.lock();
-        let rx_ring =  rx_ring_guard.as_mut().unwrap();
+        let rx_ring = rx_ring_guard.as_mut().unwrap();
 
-        
+
         let mut descs = rx_ring.desc.as_desc_slice();
 
         while descs[rdt].status & E1000_RXD_STAT_DD as u8 != 0 {
@@ -398,9 +347,7 @@ impl net::NapiPoller for NapiHandler {
 struct E1000Drv {}
 
 
-
 impl pci::Driver for E1000Drv {
-
     // The Box type has implemented PointerWrapper trait.
     type Data = Box<E1000DrvPrvData>;
 
@@ -413,9 +360,9 @@ impl pci::Driver for E1000Drv {
         pr_info!("Rust for linux e1000 driver demo (probe): {:?}\n", id);
 
         // Note: only support QEMU's 82540EM chip now.
-        
+
         // this works like a filter, the PCI device may have up to 6 bars, those bars have different types,
-        // some of them are mmio, others are io-port based. The params to the following function is a 
+        // some of them are mmio, others are io-port based. The params to the following function is a
         // filter condition, and the return value is a mask indicating which of those bars are selected.
         let bars = dev.select_bars((bindings::IORESOURCE_MEM | bindings::IORESOURCE_IO) as u64);
 
@@ -430,7 +377,7 @@ impl pci::Driver for E1000Drv {
 
         // get resource(memory range) provided by BAR0
         let mem_res = dev.iter_resource().next().ok_or(kernel::error::code::EIO)?;
-        let io_res = dev.iter_resource().skip(1).find(|r:&Resource|r.check_flags(bindings::IORESOURCE_IO)).ok_or(kernel::error::code::EIO)?;
+        let io_res = dev.iter_resource().skip(1).find(|r: &Resource| r.check_flags(bindings::IORESOURCE_IO)).ok_or(kernel::error::code::EIO)?;
 
         // TODO pci_save_state(pdev); not supported by crate now, only have raw C bindings.
 
@@ -443,7 +390,6 @@ impl pci::Driver for E1000Drv {
 
         // get the io-port based address
         let io_addr = Arc::try_new(pci::IoPort::try_new(&io_res)?)?;
-
 
 
         // TODO implement C version `e1000_init_hw_struct()`
@@ -480,8 +426,8 @@ impl pci::Driver for E1000Drv {
 
 
         // SAFETY: `spinlock_init` is called below.
-        let mut tx_ring = unsafe{SpinLock::new(None)};
-        let mut rx_ring = unsafe{SpinLock::new(None)};
+        let mut tx_ring = unsafe { SpinLock::new(None) };
+        let mut rx_ring = unsafe { SpinLock::new(None) };
         // SAFETY: We don't move `tx_ring` and `rx_ring`.
         kernel::spinlock_init!(unsafe{Pin::new_unchecked(&mut tx_ring)}, "tx_ring");
         kernel::spinlock_init!(unsafe{Pin::new_unchecked(&mut rx_ring)}, "rx_ring");
@@ -500,37 +446,16 @@ impl pci::Driver for E1000Drv {
         )?)?;
 
 
-
         Ok(Box::try_new(
-            E1000DrvPrvData{
+            E1000DrvPrvData {
                 // Must hold this registration, or the device will be removed.
-                bars,
-                irq,
                 _netdev_reg: netdev_reg,
-                dev_ptr: dev.to_ptr()
             }
         )?)
     }
 
     fn remove(data: &Self::Data) {
         pr_info!("Rust for linux e1000 driver demo (remove)\n");
-
-        let netdev = data._netdev_reg.dev_get();
-        let bars = data.bars;
-        // let pci_dev_ptr = data.dev_ptr;
-        let netdev_reg = &data._netdev_reg;
-
-        netdev.netif_carrier_off();
-        netdev.netif_stop_queue();
-
-        // unsafe {
-        //     bindings::pci_release_selected_regions(pci_dev_ptr, bars);
-        //     bindings::pci_clear_master(pci_dev_ptr);
-        //     bindings::pci_disable_device(pci_dev_ptr);
-        // }
-
-        drop(netdev_reg);
-        drop(data)
     }
 }
 
@@ -543,15 +468,14 @@ impl kernel::Module for E1000KernelMod {
         pr_info!("Rust for linux e1000 driver demo (init)\n");
         let d = driver::Registration::<pci::Adapter<E1000Drv>>::new_pinned(name, module)?;
 
-        // we need to store `d` into the module struct, otherwise it will be dropped, which 
+        // we need to store `d` into the module struct, otherwise it will be dropped, which
         // means the driver will be removed.
-        Ok(E1000KernelMod {_dev: d})
+        Ok(E1000KernelMod { _dev: d })
     }
 }
 
 impl Drop for E1000KernelMod {
     fn drop(&mut self) {
         pr_info!("Rust for linux e1000 driver demo (exit)\n");
-        drop(&self._dev);
     }
 }
